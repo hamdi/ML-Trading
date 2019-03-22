@@ -4,7 +4,7 @@ import pandas
 trading_fees=0.001
 
 
-# Définitin des fonctions :
+# Définition des fonctions :
 
 def prepare_data(filename):   # retourne les dataframes d'entrainement, validation, test
     data = pandas.read_csv(filename)
