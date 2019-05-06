@@ -5,22 +5,25 @@ from operator import sub
 
 # Variables Globales :
 trading_fees=0.001
-stocks=["MSFT","AAPL","AMZN","GOOGL","FB","INTC","CSCO","CMCSA","PEP","NFLX","ADBE","PYPL","AVGO","AMGN","NVDA","TXN","COST","SBUX","QCOM","BKNG","GILD","CHTR","QQQ","MDLZ","ADP","TMUS","CME","ORCL","TEVA","BB","NWSA","ERIC","EBAY","PEP","F","NOK","JPM","GE","BAC","XOM","WMT","PG","T","C","JNJ","IBM","PFE","KO","MRK","CVX"]
+stocks=["XOM","GE","MSFT","WMT","JNJ","PFE","BAC","INTC","IBM","PG","MO","JPM","CVX","CSCO","KO","WFC","VZ","PEP","UPS","HD","T","AMGN","COP","CMCSA","ABT","MRK","ORCL","AXP","MMM","MDT","MS","LLY","HPQ","QCOM","SLB","UNH","DIS","GS","EBAY","UTX","BA","BMY","WBA","SLB","LOW","MCD","MSI","CCL","NOK","APA"]
+strategies=["buy_and_hold","SMA","SMA_EMA","MACD"]
 work_dir="C:/Projet_Python"
 
 
 # Préparation de l'environnement
 data_dir=work_dir+"/data/"
+if not(os.path.isdir(data_dir)):
+    os.makedirs(data_dir)
 os.chdir(data_dir)
 
 # Définition des fonctions :
     
 def download_data():
-    if not(os.path.isdir(data_dir)):
-        os.makedirs(data_dir)
     for stock in stocks:
         furl = urllib.request.urlopen("https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol="+stock+"&apikey=MIWNDR7MSTNZ804F&datatype=csv&outputsize=full")
         data = pandas.read_csv(furl)
+        data = data.set_index(['timestamp'])
+        data=data.loc[:'2005-01-03']
         data.to_csv(data_dir+stock+".csv")
         time.sleep(20)  # Le nombre de requetes par minute est limité
     with open("data_downloaded.txt", 'w') as file:  # Use file to refer to the file object
@@ -32,7 +35,7 @@ def data_downloaded():
         
 def load_data(stock):   # retourne les dataframes d'entrainement, validation, test
     data = pandas.read_csv(stock+".csv")
-    data = data.drop(["Unnamed: 0","open","close","high","low","dividend_amount","split_coefficient"], axis=1) 
+    data = data.drop(["open","close","high","low","dividend_amount","split_coefficient"], axis=1) 
     data.timestamp = pandas.to_datetime(data.timestamp)
     data.rename(columns={'timestamp':'date','adjusted_close':'price'},inplace=True)
     data=data.iloc[::-1]
@@ -125,7 +128,7 @@ def MACD(data, plot=False):   #   Ajoute une colonne MACD
 
 def MACD_strategy(data):
     MACD(data)
-    data["decision"]=[-1+2*int(data["MACD"][i]>0) for i in range (data.shape[0])]
+    data["decision"]=[-1+2*int(data["MACD"][i]<0) for i in range (data.shape[0])]
     
     
     
@@ -159,46 +162,40 @@ def test_stock(stock):
     SMA_EMA_strategy(a)
     backtest_profit(a)
 
-def test_SMA():
-    res=0
-    for stock in stocks:
-        a=load_data(stock)
-        SMA_strategy(a)
-        res+=backtest_profit(a,prnt=False)
-    return (res/len(stocks))
 
-def test_buyandhold():
+def test_strategy(strategy):
+    if len(strategy)<8:
+        strategy+="_strategy"
     res=0
     for stock in stocks:
         a=load_data(stock)
-        buy_and_hold(a)
-        res+=backtest_profit(a,prnt=False)
-    return (res/len(stocks))
-
-def test_SMA_EMA():
-    res=0
-    for stock in stocks:
-        a=load_data(stock)
-        SMA_EMA_strategy(a)
-        res+=backtest_profit(a,prnt=False)
-    return (res/len(stocks))
-
-def test_MACD():
-    res=0
-    for stock in stocks:
-        a=load_data(stock)
-        MACD_strategy(a)
+        globals()[strategy](a)
         res+=backtest_profit(a,prnt=False)    # Should be log
     return (res/len(stocks))
-
+    
 
 if not(data_downloaded()):
     download_data()
-    
-    
-test_stock("GOOGL")
-test_stock("BB")
-test_stock("AAPL")
 
+
+
+
+# Tests : 
+
+# Tests des stocks :
+    
+#test_stock("MSFT")
+#test_stock("XOM")
+#test_stock("GE")
+    
+
+# Tests des stratégies :
+    
+#for strategy in strategies:
+#    print(strategy+" profit : "+str(test_strategy(strategy)))
+    
 # Resultats :
-# Buy_and_hold >> SMA ~ EMA > MACD
+# Buy_and_hold : 243.11
+# SMA : 86.54
+# SMA_EMA : 98.73
+# MACD : 119.12
