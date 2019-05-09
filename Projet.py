@@ -1,6 +1,8 @@
 import pandas, urllib.request, time, os
 from operator import sub
-
+from sklearn import linear_model
+from sklearn.metrics import mean_squared_error, r2_score
+import matplotlib.pyplot as plt
 
 
 # Variables Globales :
@@ -40,6 +42,7 @@ def load_data(stock):   # retourne les dataframes d'entrainement, validation, te
     data.rename(columns={'timestamp':'date','adjusted_close':'price'},inplace=True)
     data=data.iloc[::-1]
     data = data.reset_index()
+    data = data.drop(["index"], axis=1)
     return data
 
 
@@ -123,7 +126,7 @@ def MACD(data, plot=False):   #   Ajoute une colonne MACD
         else:
             macd_sig.append(sum(macd[i-9+1:i+1])/9)
     data["MACD"]=list(map(sub, macd, macd_sig))
-    if plot==True:
+    if plot:
         data.plot(x="date",y="MACD",title="évolution du MACD")
 
 def MACD_strategy(data):
@@ -131,7 +134,7 @@ def MACD_strategy(data):
     data["decision"]=[-1+2*int(data["MACD"][i]<0) for i in range (data.shape[0])]
     
     
-    
+
 def split_data(data):
     n=data.shape[0]
     train = data.iloc[:int(n*0.6),]
@@ -139,6 +142,8 @@ def split_data(data):
     test = data.iloc[int(n*0.8):,]
     vld = vld.reset_index()
     test = test.reset_index()
+    vld = vld.drop(["index"], axis=1)
+    test = test.drop(["index"], axis=1)
     return train, vld, test
 
 
@@ -177,8 +182,60 @@ def test_strategy(strategy):
 if not(data_downloaded()):
     download_data()
 
+for stock in stocks:
+    if not(os.path.isfile(stock+".csv")):
+        print(stock)
 
 
+def LR_strategy(Xt,Yt,Xv,Yv, visualise=True):   # Régression Linéeaire
+    Xt=Xt.drop(["date"], axis=1)
+    Xv_temp=Xv.drop(["date"], axis=1)
+    for i in [Xt,Xv_temp]:
+        EMA(i,10)
+        SMA(i,10)
+        MACD(i)
+    
+    regr = linear_model.LinearRegression()
+    # Entrainer le modèle sur les données d'entrainement
+    regr.fit(Xt, Yt)
+    # Faire des prédictions sur les données de validation
+    Yp = regr.predict(Xv_temp)
+    
+    if visualise:
+        print('Coefficients : ', regr.coef_)
+        print("Mean squared error: %.2f"
+              % mean_squared_error(Yv, Yp))
+        
+        # Explained variance score: 1 is perfect prediction
+        print('Variance score: %.2f' % r2_score(Yv,Yp))
+        # Plot outputs
+        plt.scatter(Yp, Yv,  color='black')
+        plt.plot(Yv, Yv, color='blue', linewidth=3)
+        plt.xlabel('Y(actual)')
+        plt.ylabel('Y(Predicted)')
+        plt.show()
+    
+    Xv["decision"]=(Yp-Xv["price"])/Xv["price"]
+    Xv["decision"]=(Xv["decision"]-Xv["decision"].min())/(Xv["decision"].max()-Xv["decision"].min())
+    print(min(Xv["decision"]))
+    print(max(Xv["decision"]))
+    print(Xv["decision"].mean())
+    
+    return regr,Yp
+
+def prepare_Y(data):
+    y=data["price"][1:]
+    y=y.append(pandas.Series(y.iloc[-1]),ignore_index=True)
+    return(y)
+
+
+data=load_data("MSFT")
+train,vld,test=split_data(data)
+Yt=prepare_Y(train)
+Yv=prepare_Y(vld)
+
+r,Yp=LR_strategy(train,Yt,vld,Yv)
+backtest_profit(vld)
 
 # Tests : 
 
