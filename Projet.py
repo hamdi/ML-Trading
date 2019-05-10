@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 # Variables Globales :
 trading_fees=0.001
 stocks=["XOM","GE","MSFT","WMT","JNJ","PFE","BAC","INTC","IBM","PG","MO","JPM","CVX","CSCO","KO","WFC","VZ","PEP","UPS","HD","T","AMGN","COP","CMCSA","ABT","MRK","ORCL","AXP","MMM","MDT","MS","LLY","HPQ","QCOM","SLB","UNH","DIS","GS","EBAY","UTX","BA","BMY","WBA","SLB","LOW","MCD","MSI","CCL","NOK","APA"]
-strategies=["buy_and_hold","SMA","SMA_EMA","MACD"]
+strategies=["buy_and_hold","SMA","SMA_EMA","MACD","ML_LR"]
 work_dir="C:/Projet_Python"
 
 
@@ -56,7 +56,7 @@ def plot_data(data, indicator=None): #Syntaxe: plot_data(DataFrame, ["Indicator1
             l.append(i)
         data.plot(x="date",y=l, title="Évolution au cours du temps")
  
-def backtest(data,seuil=0):
+def backtest(data,seuil=0.7):
     stock=0
     money=100
     V=[]  # Valeur totale du portefeuille
@@ -74,10 +74,10 @@ def backtest(data,seuil=0):
     return (V,fee)
           
   
-def backtest_profit(data, seuil=0, prnt=True):  # Valeur finale du portefeuille
+def backtest_profit(data, seuil=0.7, prnt=True):  # Valeur finale du portefeuille
     profit=backtest(data,seuil)[0][-1]-100
     if prnt:
-        print("Profit : ","{:.3f}".format(profit),' %')
+        print("Profit : ","{:.3f}".format(profit),' %\n')
     return profit
         
     
@@ -147,37 +147,48 @@ def split_data(data):
     return train, vld, test
 
 
-def test_stock(stock):   
+def test_stock(stock, v=False):  #v: tester seulement sur les données de validation  
     print("\n"+stock+" : \n")
-    a=load_data(stock)
-    plot_data(a)
-    print("Buy and hold :")
-    buy_and_hold(a)
-    backtest_profit(a)
+    data=load_data(stock)
+    ML_strategies=[strategy for strategy in strategies if strategy[0:2]=="ML"]
+    other=[strategy for strategy in strategies if strategy[0:2]!="ML"]
     
-    print("SMA :")
-    SMA_strategy(a)
-    backtest_profit(a)
+    for strategy in ML_strategies:
+        strategy+="_strategy"
+        res=globals()[strategy](data)[0]  # Les stratégies ML sont out-of-place
+        print(strategy+" :")
+        backtest_profit(res)
     
-    print("MACD :")
-    MACD_strategy(a)
-    backtest_profit(a)
+    if v:
+        data=split_data(data)[1]
+    plot_data(data)
     
-    print("SMA/MA Cross :")
-    SMA_EMA_strategy(a)
-    backtest_profit(a)
+    for strategy in other:
+        if len(strategy)<8:
+            strategy+="_strategy"
+        globals()[strategy](data)
+        print(strategy+" :")
+        backtest_profit(data)
 
 
-def test_strategy(strategy):
+
+def test_strategy(strategy, v=False):
     if len(strategy)<8:
         strategy+="_strategy"
     res=0
     for stock in stocks:
-        a=load_data(stock)
-        globals()[strategy](a)
-        res+=backtest_profit(a,prnt=False)    # Should be log
+        data=load_data(stock)        
+        if v and strategy[0:2]!="ML":  # Les stratégies ML nécessitent la totalité des données
+            data=split_data(data)[1]
+            
+        if strategy[0:2]=="ML":
+            data=globals()[strategy](data)[0]  # Les stratégies ML sont out-of-place
+                                                #(prennent données d'entrainement et donnent validation)
+        else:
+            globals()[strategy](data)   # in-place
+        res+=backtest_profit(data,prnt=False)
     return (res/len(stocks))
-    
+
 
 if not(data_downloaded()):
     download_data()
@@ -185,15 +196,32 @@ if not(data_downloaded()):
 for stock in stocks:
     if not(os.path.isfile(stock+".csv")):
         print(stock)
+    
+def prepare_Y(data):
+    y=data["price"][1:]
+    y=y.append(pandas.Series(y.iloc[-1]),ignore_index=True)
+    return(y)
 
+def normalise(data):
+    return (data-data.mean())/(data.std())
 
-def LR_strategy(Xt,Yt,Xv,Yv, visualise=True):   # Régression Linéeaire
+def ML_LR_strategy(data, visualise=False, norm=False):   # Régression Linéeaire
+    Xt,Xv,test=split_data(data)
+    Yt=prepare_Y(Xt)
+    Yv=prepare_Y(Xv)
     Xt=Xt.drop(["date"], axis=1)
     Xv_temp=Xv.drop(["date"], axis=1)
+    
     for i in [Xt,Xv_temp]:
         EMA(i,10)
         SMA(i,10)
         MACD(i)
+        
+    if norm:
+        Xv_temp=normalise(Xv_temp)
+        Xt=normalise(Xt)
+        Yt=normalise(Yt)
+        Yv=normalise(Yv)
     
     regr = linear_model.LinearRegression()
     # Entrainer le modèle sur les données d'entrainement
@@ -203,11 +231,10 @@ def LR_strategy(Xt,Yt,Xv,Yv, visualise=True):   # Régression Linéeaire
     
     if visualise:
         print('Coefficients : ', regr.coef_)
-        print("Mean squared error: %.2f"
+        print("Erreur quadratique moyenne: %.2f"
               % mean_squared_error(Yv, Yp))
         
-        # Explained variance score: 1 is perfect prediction
-        print('Variance score: %.2f' % r2_score(Yv,Yp))
+        print('Coefficient de corrélation: %.2f' % r2_score(Yv,Yp))
         # Plot outputs
         plt.scatter(Yp, Yv,  color='black')
         plt.plot(Yv, Yv, color='blue', linewidth=3)
@@ -216,43 +243,44 @@ def LR_strategy(Xt,Yt,Xv,Yv, visualise=True):   # Régression Linéeaire
         plt.show()
     
     Xv["decision"]=(Yp-Xv["price"])/Xv["price"]
-    Xv["decision"]=(Xv["decision"]-Xv["decision"].min())/(Xv["decision"].max()-Xv["decision"].min())
-    print(min(Xv["decision"]))
-    print(max(Xv["decision"]))
-    print(Xv["decision"].mean())
-    
-    return regr,Yp
+    Xv["decision"]=2*(Xv["decision"]-Xv["decision"].min())/(Xv["decision"].max()-Xv["decision"].min())-1
 
-def prepare_Y(data):
-    y=data["price"][1:]
-    y=y.append(pandas.Series(y.iloc[-1]),ignore_index=True)
-    return(y)
+    return Xv,Yp
+
 
 
 data=load_data("MSFT")
-train,vld,test=split_data(data)
-Yt=prepare_Y(train)
-Yv=prepare_Y(vld)
-
-r,Yp=LR_strategy(train,Yt,vld,Yv)
-backtest_profit(vld)
+Xv,Yp=ML_LR_strategy(data,True)
+for i in range(9):
+    print("seuil = ",i/10)
+    backtest_profit(Xv,seuil=i/10)
 
 # Tests : 
 
 # Tests des stocks :
     
-#test_stock("MSFT")
-#test_stock("XOM")
-#test_stock("GE")
-    
+#test_stock("MSFT",True)
+#test_stock("XOM",True)
+#test_stock("GE",True)
+   
 
 # Tests des stratégies :
     
-#for strategy in strategies:
-#    print(strategy+" profit : "+str(test_strategy(strategy)))
+for strategy in strategies:
+    print(strategy+" profit : "+str(test_strategy(strategy,v=True)))
     
-# Resultats :
+# Resultats : 
+# v=False (données complètes)
 # Buy_and_hold : 243.11
 # SMA : 86.54
 # SMA_EMA : 98.73
 # MACD : 119.12
+
+# v=True (données de validation)
+# Buy_and_hold : 28.67
+# SMA : 8.64
+# SMA_EMA : 5.78
+# MACD : 12.89
+# ML_LR: 14.49 (seuil=0); 18.38 (seuil=0.7)
+# ML_LR avec norm: 1.08
+    
