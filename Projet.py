@@ -201,27 +201,53 @@ def prepare_Y(data):
     y=data["price"][1:]
     y=y.append(pandas.Series(y.iloc[-1]),ignore_index=True)
     return(y)
+    
 
-def normalise(data):
-    return (data-data.mean())/(data.std())
 
-def ML_LR_strategy(data, visualise=False, norm=False):   # Régression Linéeaire
-    Xt,Xv,test=split_data(data)
-    Yt=prepare_Y(Xt)
-    Yv=prepare_Y(Xv)
+def normalise(data,reverse=False, normdata=False):    
+    if type(normdata) == type(False):
+        normdata=data
+    if reverse:
+        return (data*normdata.std())+normdata.mean()
+    else:
+        return (data-normdata.mean())/(normdata.std())
+
+def ML_preprocessing(data,norm=True):
+    Xt,Xv,test=split_data(data)    
     Xt=Xt.drop(["date"], axis=1)
     Xv_temp=Xv.drop(["date"], axis=1)
+    Yt=prepare_Y(Xt)
+    Yv=prepare_Y(Xv_temp)
     
     for i in [Xt,Xv_temp]:
         EMA(i,10)
         SMA(i,10)
         MACD(i)
-        
+                
     if norm:
+        Yv_noNorm=Yv
+        Yv=normalise(Yt,normdata=Xv_temp["price"])
+        Yt=normalise(Yt,normdata=Xt["price"])
         Xv_temp=normalise(Xv_temp)
         Xt=normalise(Xt)
-        Yt=normalise(Yt)
-        Yv=normalise(Yv)
+    return Xt,Yt,Xv,Xv_temp,Yv,Yv_noNorm
+
+def ML_visualise(regr,Yv,Yp):
+    print('Coefficients : ', regr.coef_)
+    print("Erreur quadratique moyenne: %.2f"
+          % mean_squared_error(Yv, Yp))
+    
+    print('Coefficient de corrélation: %.2f' % r2_score(Yv,Yp))
+    # Plot outputs
+    plt.scatter(Yp, Yv,  color='black')
+    plt.plot(Yv, Yv, color='blue', linewidth=3)
+    plt.xlabel('Y(actual)')
+    plt.ylabel('Y(Predicted)')
+    plt.show()
+
+def ML_LR_strategy(data, visualise=False, norm=True):   # Régression Linéeaire
+    
+    Xt,Yt,Xv,Xv_temp,Yv,Yv_noNorm=ML_preprocessing(data,norm)
     
     regr = linear_model.LinearRegression()
     # Entrainer le modèle sur les données d'entrainement
@@ -229,18 +255,12 @@ def ML_LR_strategy(data, visualise=False, norm=False):   # Régression Linéeair
     # Faire des prédictions sur les données de validation
     Yp = regr.predict(Xv_temp)
     
+    if norm:  #dénormalisation
+        Yp=normalise(Yp,reverse=True,normdata=Yv_noNorm)
+        Yv=Yv_noNorm
+    
     if visualise:
-        print('Coefficients : ', regr.coef_)
-        print("Erreur quadratique moyenne: %.2f"
-              % mean_squared_error(Yv, Yp))
-        
-        print('Coefficient de corrélation: %.2f' % r2_score(Yv,Yp))
-        # Plot outputs
-        plt.scatter(Yp, Yv,  color='black')
-        plt.plot(Yv, Yv, color='blue', linewidth=3)
-        plt.xlabel('Y(actual)')
-        plt.ylabel('Y(Predicted)')
-        plt.show()
+        ML_visualise(regr,Yv,Yp)
     
     Xv["decision"]=(Yp-Xv["price"])/Xv["price"]
     Xv["decision"]=2*(Xv["decision"]-Xv["decision"].min())/(Xv["decision"].max()-Xv["decision"].min())-1
@@ -250,7 +270,7 @@ def ML_LR_strategy(data, visualise=False, norm=False):   # Régression Linéeair
 
 
 data=load_data("MSFT")
-Xv,Yp=ML_LR_strategy(data,True)
+Xv,Yp=ML_LR_strategy(data,True,True)
 for i in range(9):
     print("seuil = ",i/10)
     backtest_profit(Xv,seuil=i/10)
@@ -266,8 +286,9 @@ for i in range(9):
 
 # Tests des stratégies :
     
-for strategy in strategies:
-    print(strategy+" profit : "+str(test_strategy(strategy,v=True)))
+#for strategy in strategies:
+#    print(strategy+" profit : "+str(test_strategy(strategy,v=True)))
+#test_strategy("ML_LR")
     
 # Resultats : 
 # v=False (données complètes)
@@ -281,6 +302,6 @@ for strategy in strategies:
 # SMA : 8.64
 # SMA_EMA : 5.78
 # MACD : 12.89
-# ML_LR: 14.49 (seuil=0); 18.38 (seuil=0.7)
+# ML_LR: 14.49 (seuil=0); 18.38 (seuil=0.7), norm: 18.36 (seuil=0.7)
 # ML_LR avec norm: 1.08
     
