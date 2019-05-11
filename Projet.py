@@ -75,6 +75,7 @@ def backtest(data,seuil=0.7, plot=False):
     if plot:
         data["Valeur_portefeuille"]=V
         data.plot("date","Valeur_portefeuille", title="Évolution de la valeur du portefeuille")
+        plt.show()
         data = data.drop(["Valeur_portefeuille"], axis=1)
     return (V,fee)
           
