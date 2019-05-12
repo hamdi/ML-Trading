@@ -1,7 +1,7 @@
-import pandas, urllib.request, os
+import pandas, urllib.request, os, warnings
 from copy import deepcopy
 from operator import sub
-from sklearn import linear_model,neighbors,ensemble
+from sklearn import linear_model,neighbors,ensemble,svm
 from sklearn.metrics import mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 
@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 # Variables Globales :
 trading_fees=0.001
 stocks=["XOM","GE","MSFT","WMT","JNJ","PFE","BAC","INTC","IBM","PG","MO","JPM","CVX","CSCO","KO","WFC","VZ","PEP","UPS","HD","T","AMGN","COP","CMCSA","ABT","MRK","ORCL","AXP","MMM","MDT","MS","LLY","HPQ","QCOM","SLB","UNH","DIS","GS","EBAY","UTX","CAT","BMY","WBA","SLB","LOW","MCD","MSI","CCL","NOK","APA"]
-strategies=["buy_and_hold","SMA","SMA_EMA","MACD","RSI","bollinger","ML_LR","ML_KNN"]
+strategies=["buy_and_hold","SMA","SMA_EMA","MACD","RSI","bollinger","ML_LR","ML_KNN","ML_GB","ML_SVR","ML_DT"]
 work_dir="C:/Projet_Python"
 
     
@@ -18,6 +18,8 @@ data_dir=work_dir+"/data/"
 if not(os.path.isdir(data_dir)):
     os.makedirs(data_dir)
 os.chdir(data_dir)
+pandas.options.mode.chained_assignment = None
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # Définition des fonctions :
     
@@ -36,7 +38,7 @@ def data_downloaded():
     return os.path.isfile('data_downloaded.txt')
 
         
-def load_data(stock):   # retourne les dataframes d'entrainement, validation, test
+def load_data(stock):
     data = pandas.read_csv(stock+".csv")
     data = data.drop(["open","close","high","low","dividend_amount","split_coefficient"], axis=1) 
     data.timestamp = pandas.to_datetime(data.timestamp)
@@ -56,28 +58,46 @@ def plot_data(data, indicator=None): #Syntaxe: plot_data(DataFrame, ["Indicator1
         for i in indicator:
             l.append(i)
         data.plot(x="date",y=l, title="Évolution au cours du temps")
+        
+        
+def plot_strategy(data,V,seuil):  # Utilisée dans la fonction backtest
+    d=deepcopy(data)
+    d["buy"]=[None for n in range(data.shape[0])]
+    d["sell"]=[None for n in range(data.shape[0])]
+    pos=0
+    for i in range(data.shape[0]):
+        if pos in [-1,0] and data["decision"][i]>seuil:
+            d["buy"][i]=d["price"][i]
+            pos=1
+        elif pos in [0,1] and data["decision"][i]<-seuil:
+            d["sell"][i]=d["price"][i]
+            pos=-1
+    d["Valeur_portefeuille"]=V
+    ax=d.plot(x="date",y=["price","Valeur_portefeuille"],secondary_y="Valeur_portefeuille",figsize=(12,6),title="Évolution de la valeur du portefeuille")
+    if not(d["buy"].isnull().all()):
+        d.plot(x="date",y="buy", marker='^',ax=ax,color='#3FCB8F',markersize=7)
+    if not(d["sell"].isnull().all()):
+        d.plot(x="date",y="sell",marker='v',color='red',ax=ax,markersize=7)
+    plt.show()
+
  
-def backtest(data,seuil=0.7, plot=False):
-    stock=0
+def backtest(data,seuil=0.8, plot=False):
+    stock=0     # initialement le portefeuille ne contient que de l'argent
     money=100
-    V=[]  # Valeur totale du portefeuille
-    fee=0
+    V=[]         # valeur totale du portefeuille
     n=data.shape[0]
     for i in range(n):
         V.append(money + stock*data["price"][i])
-        if abs(data["decision"][i])>seuil:
+        if data["decision"][i]>seuil or (data["decision"][i]<-seuil and stock!=0) : # 2eme condition: le premier trade est un achat
             percent_in_stock = 0.5 + 0.5*data["decision"][i]  # Nouveau pourcentage du portefeuille en stock
             trade_fee = trading_fees*abs(money - V[i]*(1-percent_in_stock))  # fee=trading_fees*|money(t-1)-money(t)|
-            V[i] = V[i] - trade_fee
-            fee += trade_fee
+            V[i] = V[i] - trade_fee      # On retranche les frais de courtage
+            # nouvelles valeurs de stock et money
             stock = V[i]*percent_in_stock/data["price"][i]
-            money = V[i]*(1-percent_in_stock)            
+            money = V[i]*(1-percent_in_stock)
     if plot:
-        data["Valeur_portefeuille"]=V
-        data.plot("date","Valeur_portefeuille", title="Évolution de la valeur du portefeuille")
-        plt.show()
-        data = data.drop(["Valeur_portefeuille"], axis=1)
-    return (V,fee)
+        plot_strategy(data,V,seuil)
+    return V
           
 def maxdrawdown(V):
     maxd=1
@@ -87,15 +107,15 @@ def maxdrawdown(V):
                 maxd=V[j]/V[i]
     return 100-100*maxd
   
-def backtest_profit(data, seuil=0, prnt=True,plot=False):  # Valeur finale du portefeuille
-    profit=backtest(data,seuil,plot)[0][-1]-100
+def backtest_profit(data, seuil=0.8, prnt=True,plot=False):  # Valeur finale du portefeuille
+    profit=pow(backtest(data,seuil,plot)[-1]/100,251.5/len(data))*100 -100
     if prnt:
         print("Profit : ","{:.3f}".format(profit),' %\n')
     return profit
 
-def becktest_profit_dd(data, seuil=0, prnt=True):  # Valeur finale du portefeuille
-    V=backtest(data,seuil)[0]
-    profit=V[-1]-100
+def backtest_profit_dd(data, seuil=0.8, prnt=True):  # Valeur finale du portefeuille
+    V=backtest(data,seuil=seuil)
+    profit=pow(V[-1]/100,251.5/len(V))*100 -100
     dd=maxdrawdown(V)
     if prnt:
         print("Profit : ","{:.3f}".format(profit),' %\n')
@@ -184,8 +204,7 @@ def RSI_strategy(data,p=9):
     
 
 def bollinger(data,p=20):
-    ub=[]
-    lb=[]
+    ub,lb=[],[]
     datac=deepcopy(data)
     n=data.shape[0]
     SMA(datac,p)
@@ -227,28 +246,21 @@ def test_stock(stock, v=False, prnt=False,plot=False):  #v: tester seulement sur
         strategy+="_strategy"
         res=globals()[strategy](data)[0]  # Les stratégies ML sont out-of-place
         print(strategy+" :")
-        backtest_profit(res,plot=plot)
-
-    
+        backtest_profit(res,plot=plot) 
     if v:
-        data=split_data(data)[1]
-    
-    
+        data=split_data(data)[1]    
     for strategy in other:
         if len(strategy)<10:
             strategy+="_strategy"
         globals()[strategy](data)
         print(strategy+" :")
         backtest_profit(data,plot=plot)
-        
-        
 
 
-
-def test_strategy(strategy, v=False):
+def test_strategy(strategy, v=False, seuil=0.8):
     if len(strategy)<10:
         strategy+="_strategy"
-    res,drawdown=0,0
+    pr,drawdown=0,0
     for stock in stocks:
         data=load_data(stock)      
         if v and strategy[0:2]!="ML":  # Les stratégies ML nécessitent la totalité des données
@@ -259,23 +271,18 @@ def test_strategy(strategy, v=False):
                                                 #(prennent données d'entrainement et donnent validation)
         else:
             globals()[strategy](data)   # in-place
-        
-        res+=backtest_profit_dd(data,prnt=False)
-    return (res/len(stocks),drawdown/len(stocks))
+        res=backtest_profit_dd(data,prnt=False,seuil=seuil)
+        pr+=res[0]
+        drawdown+=res[1]
+    return (pr/len(stocks),drawdown/len(stocks))
 
-
-if not(data_downloaded()):
-    download_data()
-
-for stock in stocks:
-    if not(os.path.isfile(stock+".csv")):
-        print(stock)
     
 def prepare_Y(data):
-    y=data["price"][1:]
-    y=y.append(pandas.Series(y.iloc[-1]),ignore_index=True)
-    return(y)
-    
+    y=data["price"].iloc[::-1]
+    y=pandas.DataFrame(y)
+    SMA(y,20)
+    y=y.iloc[::-1]
+    return(y["SMA20"])
 
 
 def normalise(data,reverse=False, normdata=False):    
@@ -308,7 +315,17 @@ def ML_preprocessing(data,norm=True):
         Xt=normalise(Xt)
     return Xt,Yt,Xv0,Xv,Yv,Yv_noNorm
 
-def ML_visualise(Yv,Yp): 
+def ML_postprocessing(Yp,Yv,Yv_noNorm,norm,plot,Xv0):
+    if norm:  #dénormalisation
+        Yp=normalise(Yp,reverse=True,normdata=Yv_noNorm)
+        Yv=Yv_noNorm
+    if plot:    
+        ML_plot(Yv,Yp)
+    Xv0["decision"]=Yp/Xv0["price"]-1
+    Xv0["decision"]=2*(Xv0["decision"]-Xv0["decision"].min())/(Xv0["decision"].max()-Xv0["decision"].min())-1
+    return Xv0,Yp
+
+def ML_plot(Yv,Yp): 
     print("Erreur quadratique moyenne: %.2f"
           % mean_squared_error(Yv, Yp))
     
@@ -320,77 +337,71 @@ def ML_visualise(Yv,Yp):
     plt.ylabel('Y(Predicted)')
     plt.show()
 
-def ML_LR_strategy(data, visualise=False, norm=False):   # Régression Linéeaire
-    
+def ML_LR_strategy(data, plot=False, norm=True):   # Régression Linéeaire
     Xt,Yt,Xv0,Xv,Yv,Yv_noNorm=ML_preprocessing(data,norm)
-    
-    regr = linear_model.LinearRegression()
+    model = linear_model.LinearRegression()
     # Entrainer le modèle sur les données d'entrainement
-    regr.fit(Xt, Yt)
+    model.fit(Xt, Yt)
     # Faire des prédictions sur les données de validation
-    Yp = regr.predict(Xv)
-    
-    if norm:  #dénormalisation
-        Yp=normalise(Yp,reverse=True,normdata=Yv_noNorm)
-        Yv=Yv_noNorm
-    
-    if visualise:
+    Yp = model.predict(Xv)
+    Xv0,Yp=ML_postprocessing(Yp,Yv,Yv_noNorm,norm,plot,Xv0)
+    if plot:
         print('Coefficients : ', regr.coef_)
-        ML_visualise(Yv,Yp)
-    
-    Xv0["decision"]=(Yp-Xv0["price"])/Xv0["price"]
-    Xv0["decision"]=2*(Xv0["decision"]-Xv0["decision"].min())/(Xv0["decision"].max()-Xv0["decision"].min())-1
-
     return Xv0,Yp
 
-def ML_KNN_strategy(data,k=10, visualise=False, norm=False):
-    
+def ML_KNN_strategy(data,k=15, plot=False, norm=True):
     Xt,Yt,Xv0,Xv,Yv,Yv_noNorm=ML_preprocessing(data,norm)
-    
     model = neighbors.KNeighborsRegressor(k, weights='uniform')
     model.fit(Xt, Yt)
     Yp = model.predict(Xv)
-    
-    if norm:  #dénormalisation
-        Yp=normalise(Yp,reverse=True,normdata=Yv_noNorm)
-        Yv=Yv_noNorm
-    if visualise:    
-        ML_visualise(Yv,Yp)
-    
-    Xv0["decision"]=(Yp-Xv0["price"])/Xv0["price"]
-    Xv0["decision"]=2*(Xv0["decision"]-Xv0["decision"].min())/(Xv0["decision"].max()-Xv0["decision"].min())-1
-
+    Xv0,Yp=ML_postprocessing(Yp,Yv,Yv_noNorm,norm,plot,Xv0)
     return Xv0,Yp
 
-def ML_DT_strategy(data,visualise=True,norm=True):
+def ML_DT_strategy(data,plot=False,norm=True):
     Xt,Yt,Xv0,Xv,Yv,Yv_noNorm=ML_preprocessing(data,norm)
     model=ensemble.ExtraTreesRegressor()
     model.fit(Xt, Yt)
     Yp = model.predict(Xv)
+    Xv0,Yp=ML_postprocessing(Yp,Yv,Yv_noNorm,norm,plot,Xv0)
+    return Xv0,Yp
 
-    if norm:  #dénormalisation
-        Yp=normalise(Yp,reverse=True,normdata=Yv_noNorm)
-        Yv=Yv_noNorm
-    if visualise:    
-        ML_visualise(Yv,Yp)
+def ML_SVR_strategy(data,plot=False,norm=True):
+    Xt,Yt,Xv0,Xv,Yv,Yv_noNorm=ML_preprocessing(data,norm)
+    model = svm.SVR(kernel='linear')
+    model.fit(Xt, Yt)
+    Yp = model.predict(Xv)
+    Xv0,Yp=ML_postprocessing(Yp,Yv,Yv_noNorm,norm,plot,Xv0)
+    return Xv0,Yp
     
-    Xv0["decision"]=(Yp-Xv0["price"])/Xv0["price"]
-    Xv0["decision"]=2*(Xv0["decision"]-Xv0["decision"].min())/(Xv0["decision"].max()-Xv0["decision"].min())-1
-
+def ML_GB_strategy(data,plot=False,norm=True):
+    Xt,Yt,Xv0,Xv,Yv,Yv_noNorm=ML_preprocessing(data,norm)
+    model=ensemble.GradientBoostingRegressor()
+    model.fit(Xt, Yt)
+    Yp = model.predict(Xv)
+    Xv0,Yp=ML_postprocessing(Yp,Yv,Yv_noNorm,norm,plot,Xv0)
     return Xv0,Yp
 
 
 
-data=load_data("CVX")
-test_stock("CVX",plot=True)
+
+if not(data_downloaded()):
+    download_data()
 
 
+#pr,dd=test_strategy("buy_and_hold")
+#print("BAH profit : "+str(pr)+"\nMax drawdown: "+str(dd)+"\n")
 
-#Xv,Yp=ML_LR_strategy(data,visualise=True,norm=False)
-#for i in range(10):
+#data=load_data("CVX")
+#Xv,Yp=ML_LR_strategy(data,plot=True,norm=False)
+# run block of code and catch warnings
+
+
+#
+#for i in range(0,10):
 #    print("seuil = ",i/10)
-#    backtest_profit(Xv,seuil=i/10)
-#    
+#    pr,dd=test_strategy("RSI",v=False,seuil=i/10)
+#    print("profit : "+str(pr)+"\nMax drawdown: "+str(dd)+"\n")
+
 #print("KNN")
 #Xv,Yp=ML_KNN_strategy(data,visualise=True,norm=True)
 #for i in range(10):
@@ -412,17 +423,18 @@ test_stock("CVX",plot=True)
 # Tests : 
 
 # Tests des stocks :
-    
-#test_stock("MSFT",True)
-#test_stock("XOM",True)
-#test_stock("GE",True)
+ 
+#test_stock("CVX",plot=True,v=True)
+#test_stock("MSFT",plot=True)
+#test_stock("XOM",plot=True)
+
    
 
 # Tests des stratégies :
-
+#
 #for strategy in strategies:
-#    p,d=test_strategy(strategy,v=False)
-#    print(strategy+" profit : "+str(p)+"\nMax drawdown: "+str(d))
+#    pr,dd=test_strategy(strategy,v=True)
+#    print(strategy+" profit : "+str(pr)+"\nMax drawdown: "+str(dd))
 
 
 # Resultats (ANCIENS, VOIR LE FICHIER EXCEL POUR LES NOUVEAUX): 
